@@ -10,3 +10,5 @@ This script can help:
 This is amateur script, but i ran it without issue and it worked to fix issues i faced when i was restoring old vzdump files on new openvz host server with different set of IPs.
 
 Some VPS's Apache's was stopped, some issues because of old VPS IP, so this script may help in that.
+
+PS: In this repository is also script that can do bulk vzdump restore
