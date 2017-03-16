@@ -1,14 +1,4 @@
-# linux-bash-script-restore-openvz-vzdump-replace-ip
-
-This script can help:
-- restore vzdump file
-- delete old VM ip and replace by new one set by user
-- replace old ips in hosts, dns zone files
-- add /var/log/httpd folder, restart named and httpd
-- script will report old ip, new ip and vzlist before change to the email $mail
-
-This is amateur script, but i ran it without issue and it worked to fix issues i faced when i was restoring old vzdump files on new openvz host server with different set of IPs.
-
-Some VPS's Apache's was stopped, some issues because of old VPS IP, so this script may help in that.
-
-PS: In this repository is also script that can do bulk vzdump restore
+Couple of Linux bash scripts that can help
+A) migrating all OpenVZ VPSs from one physical openvz server to another physical openvz server
+B) restore one openvz vzdump file and do some post restore task like replacing old ip by new ip, restarting apache
+C) restore multiple openvz vzdump files and do post restore tasks..
