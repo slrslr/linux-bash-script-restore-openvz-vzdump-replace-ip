@@ -1,0 +1,109 @@
+#!/bin/bash
+#export TERM=${TERM:-dumb}
+#set -exu
+# ve_dumps.sh
+# Dump all VEs
+# modified: no nice/ionice; no tmpwatch; vzdump --snapshot switch; transfer to remote server; prepare hypervm restore raw vps; prepare billing system; prepare free IPs
+
+# remote server example IP 1.2.3.4 and username root: "root@1.2.3.4"
+remoteserverip="root@1.2.3.4"
+# bckpserverip=9.8.7.6
+# mail=me@server.com
+# add ending slash:
+remotedestdir="/vz/template/cache/"
+remoteservsshport=22
+remoteservipfixingscript="/root/vzdumprestoreandipfixing_noprompt_onlyfixing"
+
+# Todays' date
+DATE=$(date +%d)
+startt=$(date)
+
+# Paths
+BAK_PATH=/backup
+
+# Week of month
+#BAK_DIR=$(cal | awk -v date="${DATE}" '{ for( i=1; i <= NF ; i++ ) if ($i==date) { print FNR-2 } }')
+BAK_DIR=3
+
+# Function to check and remove previously failed snapshot.
+check_vzsnap() {
+  OUTPUT=`/sbin/lvdisplay | grep vzsnap`
+  [ -n "$OUTPUT" ] && lvremove -f /dev/vg0/vzsnap
+}
+
+# Function to remove all backup files and folders older than X (hours) - 168 = 7 days, 1080=45days
+#/bin/nice -n 19 /usr/bin/ionice -c2 -n7 tmpwatch -m 600 $BAK_PATH
+
+# Function to perform backup
+backup() {
+for myctid in $(vzlist -o ctid -H | grep -Ev "870|1120|4770|1810|1820|2680|2730|4320|4420|1122|86000|112000");do
+# for testing for myctid in $(vzlist -o ctid -H | grep "1820");do
+  # Check and create the required backup directory
+  [ -d "${BAK_PATH}/${BAK_DIR}" ] || mkdir -p ${BAK_PATH}/${BAK_DIR}
+  # empty /backup folder to reduce archive file
+#  if [[ "$myctid" == "870" ]];then /usr/bin/ionice -c2 -n7 tmpwatch -M 0d /vz/root/870/backup;fi
+  # do dumps
+  echo "Starting dump at `date`"
+/usr/sbin/vzdump --tmpdir $BAK_PATH --exclude-path '.+/+.tar.gz' --exclude-path '.+/+.tgz' --exclude-path '.+/+.gz' --exclude-path '.+/log/messages.+' --exclude-path '.+/log/exim.+' --exclude-path '.+/log/maillog.+' --exclude-path '.+/log/secure.+' --exclude-path '.+/log/cron.+' --exclude-path '.+/bak/.+' --exclude-path '/tmp/.+' --exclude-path '/var/tmp/.+' --exclude-path '/var/run/.+pid' --dumpdir=${BAK_PATH}/${BAK_DIR} --bwlimit 1011010 --compress --snapshot $myctid
+# --bwlimit, do not add low or else dump creating and VPS suspension time can take critically long time
+  echo "Completed $myctid dump at `date`"
+
+#scp -P "$remoteservsshport" ${BAK_PATH}/${BAK_DIR}/vzdump-"$myctid".tgz "$remoteserverip":"$remotedestdir"
+rsync -a --progress ${BAK_PATH}/${BAK_DIR}/vzdump-"$myctid".tgz "$remoteserverip":"$remotedestdir"
+
+ssh -p "$remoteservsshport" "$remoteserverip" "vzdump --restore $remotedestdir/vzdump-\"$myctid\".tgz \"$myctid\""
+
+ssh -p "$remoteservsshport" "$remoteserverip" "vzctl --verbose start \"$myctid\" && tail -n 20 /var/log/vzctl.log|grep \"$myctid\""
+
+echo "Was VPS restored and started? hit "d" key to delete remote vzdump file to free up some space and continue, or other key to continue without deleting remote dump."
+read -r proceed
+if [[ "$proceed" == "d" ]];then ssh -p "$remoteservsshport" "$remoteserverip" "rm -f $remotedestdir/vzdump-\"$myctid\".tgz";fi
+
+echo "Now input new IP to be assigned to a newly restored remote CT \"$myctid\":"
+read CTNEWIP
+CTOLDIP="$(vzlist $myctid -o ip -H)"
+
+echo -e "Hit any key to replace old IP $CTOLDIP by new IP $CTNEWIP in CT $myctid config and files:\nIt will use command: ssh -p $remoteservsshport $remoteserverip \"TERM=dumb $remoteservipfixingscript $myctid $CTOLDIP $CTNEWIP\""
+read -r proceed
+ssh -p "$remoteservsshport" "$remoteserverip" "TERM=dumb $remoteservipfixingscript $myctid $CTOLDIP $CTNEWIP"
+
+echo "---- IPFixing done ---, Ping to new VPS IP:" && ping -c2 -W2 "$CTNEWIP"|grep bytes
+
+echo -e "Now do this:\n- In HyperVM import RAW VPS\n- In billing system (WHMCS) replace IP and e-mail client\n- Check if \"$myctid\" is special VPS that needs any special treatment (changing nameserver IPs)."
+read -r proceed
+
+echo "Disable old VPS $myctid on this source OVZ node server now? (y = yes)"
+read -r proceed
+if [[ "$proceed" == "y" ]];then
+vzctl set "$myctid" --disable yes --save;vzctl --verbose stop "$myctid"
+fi
+
+echo "$myctid handling complete. Do the same for next CT now? (you may cancel Ctrl+c and add already done CT ids into exclude list in this script)"
+read -r continue
+done
+#ln -s /root/scripts/openvz_backup_restore_scripts/vzdumprestore $BAK_PATH/vzdumprestore 2>/dev/null
+}
+
+# Main ############################
+
+# Remove previously failed snapshot
+check_vzsnap
+
+# Run backups
+backup
+
+echo "VPS backups of the $(hostname) should be complete by the (/root/scripts/openvz_backup_restore_scripts/vzdump_all_vps) and located in /backup directory, synced on secondary server thanks to /root/nodesync. CTs backup proces:
+START: $startt
+STOPP: $(date)
+
+Backup directory of the node server:
+$(ls -lht /backup/*)
+
+Disk space:
+$(df -h)
+
+Old backups on the backup server. New ones possibly not yet synced:
+
+
+$(ssh root@$bckpserverip df -h && ls -lht /backup/*)" | mail -s "Monthly VPSNode backup finished." $mail
+exit 0
