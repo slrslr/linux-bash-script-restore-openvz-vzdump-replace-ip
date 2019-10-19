@@ -1,0 +1,80 @@
+#!/bin/bash
+clear
+#echo "This script can:
+#- restore vzdump file(commented out now)
+#- delete old CT ip and replace by new one set by user
+#- replace old ips in hosts, dns zone files
+#- add /var/log/httpd folder, restart named and httpd
+#- script will report old ip, new ip vzlist to the e-mail
+#- script does NOT do any network transfer
+#- PARAMETERS: scriptname [CTID] [OLD CT IP] [NEW CT IP]
+#- without prameters, it will prompt"
+
+if [[ "$(rpm -q mutt)" == *"not installed"* ]];then yum -q -y install mutt;fi
+mail=me@server.com
+echo "I will expect vzdump in /vz/template/cache and vz root in /vz/root:"
+vzdumpdir="/vz/template/cache"
+vzroot="/vz/root"
+echo "Listing some dumps in that dir.:" && ls -lh "$vzdumpdir"|grep tgz
+#echo "Do just VPS fixing (like IP changing inside it)? (hit key: enter) or do also vzdump restore (hit key: r) (expecting vzdump-CTID.tgz files in \"$vzdumpdir\")."
+#read -r dumpok
+CTID="$1"
+CTOLDIP="$2"
+CTNEWIP="$3"
+echo "I will work with these values: CTID $CTID oldip $CTOLDIP newip $CTNEWIP"
+if [[ "$CTID" == "" ]];then
+echo "No CTID parameter to this script command, so which CTID to work with?:"
+read -r CTID
+fi
+if [[ "$CTID" == "" ]];then echo "CTID is empty can not continue" && exit;fi
+echo -e "\nMaking sure CT is running to work with its filesystem:"
+vzctl --verbose start "$CTID"
+if [ "$dumpok" == "r" ];then
+vzdump --restore "$vzdumpdir"/vzdump-"$CTID".tgz "$CTID";vzctl start "$CTID";sleep 2
+echo "CT $CTID vzdump restore routine is complete. What now?"
+fi
+listofcts="vzlist at $(hostname):
+
+$(vzlist -o ctid,ip,hostname)"
+
+if [[ "$CTOLDIP" == "" ]];then
+vzlist -o ctid,ip
+echo "No CTOLDIP parameter to this script command, so what is the CT OLD IP? Is it $(vzlist "$CTID" -o ip -H)? Confirm = Enter key or paste different old IP.:"
+CTOLDIP="$(vzlist "$CTID" -o ip -H)"
+read -r CTOLDIP
+fi
+
+if [[ "$CTNEWIP" == "" ]];then
+echo "No CTNEWIP parameter to this script command, so which is CT NEW IP? (add this one in new HyperVM now)"
+read -r CTNEWIP
+fi
+
+vzctl set "$CTID" --ipdel "$CTOLDIP" --save
+vzctl set "$CTID" --ipadd "$CTNEWIP" --save
+
+sed -i "s|$CTOLDIP|$CTNEWIP|g" "$vzroot/$CTID/etc/hosts"
+for user in $(ls -A1 $vzroot/"$CTID"/home/);do for domain in $(ls -A1 $vzroot/"$CTID"/home/"$user"/web 2>/dev/null|grep ".");do vzctl exec "$CTID" "v-change-dns-domain-ip \"$user\" \"$domain\" \"$CTNEWIP\"" 2>/dev/null;done;done
+find $vzroot/"$CTID"/home/admin/conf/web -type f -print0 | xargs -0 sed -i "s|$CTOLDIP|$CTNEWIP|g"; 2>/dev/null
+find $vzroot/"$CTID"/home/djbdns -type f -print0 | xargs -0 sed -i "s|$CTOLDIP|$CTNEWIP|g"; 2>/dev/null
+find $vzroot/"$CTID"/etc -type f -print0 | xargs -0 sed -i "s|$CTOLDIP|$CTNEWIP|g";
+find $vzroot/"$CTID"/var/named -type f -print0 | xargs -0 sed -i "s|$CTOLDIP|$CTNEWIP|g";
+find $vzroot/"$CTID"/var/named/chroot/var/named -type f -print0 | xargs -0 sed -i "s|$CTOLDIP|$CTNEWIP|g"; 2>/dev/null
+find $vzroot/"$CTID"/opt/configs -type f -print0 | xargs -0 sed -i "s|$CTOLDIP|$CTNEWIP|g"; 2>/dev/null
+vzctl exec "$CTID" mkdir /var/log/httpd 2>/dev/null
+vzctl exec "$CTID" mkdir /var/log/apache2 2>/dev/null
+vzctl exec "$CTID" /etc/init.d/named restart 2>/dev/null
+vzctl exec "$CTID" /etc/init.d/bind9 restart 2>/dev/null
+vzctl exec "$CTID" /etc/init.d/httpd restart 2>/dev/null
+vzctl exec "$CTID" /etc/init.d/apache2 restart 2>/dev/null
+vzctl exec "$CTID" /etc/init.d/nginx restart 2>/dev/null
+echo "CT $CTID restore, ip change and fixing script finished. http://$CTNEWIP
+
+Ask CT owner to change nameserver IPs in domain registar if host domain.
+If anything dont works, errors can be old IP in /etc/hosts, /var/named/chroot/var/named or restart httpd, try /script/fixdns/fixweb
+
+$listofcts" | mutt -s "CT restore script finished" $mail
+echo -e "
+IP changing script finished.\n
+- CT owner should update nameservers if using."
+for entry in $(ls -A1 $vzroot/"$CTID"/opt/configs/nsd/conf/master && find $vzroot/"$CTID"/home/admin/ -maxdepth 1 -type d|sed -e "s|/home/admin/||g"|grep "."|sort -u);do host "$entry";done 2>/dev/null
+- I should update billing system replacing $CTOLDIP by $CTNEWIP"
