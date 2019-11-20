@@ -67,10 +67,12 @@ vzctl exec "$CTID" /etc/init.d/bind9 restart 2>/dev/null
 vzctl exec "$CTID" /etc/init.d/httpd restart 2>/dev/null
 vzctl exec "$CTID" /etc/init.d/apache2 restart 2>/dev/null
 vzctl exec "$CTID" /etc/init.d/nginx restart 2>/dev/null
+/etc/nginx/conf.d
 echo "CT $CTID restore, ip change and fixing script finished. http://$CTNEWIP
 
 Ask CT owner to change nameserver IPs in domain registar if host domain.
 If anything dont works, errors can be old IP in /etc/hosts, /var/named/chroot/var/named or restart httpd, try /script/fixdns/fixweb
+If Error 500 on VestaCP server, run grep -ri listen /etc/apache2 and make sure only one file define web server 8080 port and only one domain conf file in /etc/nginx/conf.d/
 
 $listofcts" | mutt -s "CT restore script finished" $mail
 echo -e "
